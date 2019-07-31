@@ -48,6 +48,8 @@ sfsql <- DBI::dbConnect(odbc::odbc(),
 
 # Overview
 
+**MERP**
+
 The code in this document uses Bayesian Parameter Estimation to identify credible differences between groups of performance review 1 survey responses. Specifically, it evaluates at the site grain whether a group of responses is credibly different from:
 
 1. the rest of the organization for that cohort
