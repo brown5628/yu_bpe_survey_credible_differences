@@ -1,0 +1,854 @@
+---
+title: "Performance Review 1- Credible Differences between Groups (Site Grain)"
+author: "Will Brown"
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+    code_folding: hide
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: spacelab
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(DBI)
+library(odbc)
+library(tidyverse)
+library(ggplot2)
+library(DT)
+library(viridis)
+library(htmlwidgets)
+library(skimr)
+library(visdat)
+library(DataExplorer)
+library(formattable)
+library(zoo)
+library(tint)
+library(arsenal)
+library(lubridate)
+library(rjags)
+library(readxl)
+library(BEST)
+
+sfsql <- NULL 
+```
+```{r, include=FALSE}
+# UID and PWD appear to need to be manually set to function. Saved version strips these. 
+
+sfsql <- DBI::dbConnect(odbc::odbc(), 
+                      Driver = "SQL Server", 
+                      Server = "sfsql", 
+                      Database = "Test", 
+                      Port     = 1433,
+                      Trusted_Connection = "True")
+
+```
+
+# Overview
+
+The code in this document uses Bayesian Parameter Estimation to identify credible differences between groups of performance review 1 survey responses. Specifically, it evaluates at the site grain whether a group of responses is credibly different from:
+
+1. the rest of the organization for that cohort
+2. the results from the previous cohort
+3. the results from the last like cohort
+4. the results from the last 3 cohorts
+
+
+The product of the code is a single table that returns the summary statisics necessary to establish whether any difference is credible between the two groups. These results are written back into the sql server as **INSERT TABLE NAME HERE**.
+
+# Data prep
+
+## Load responses from sql server
+
+```{sql, connection=sfsql, output.var="pr1_raw"}
+
+select 
+	pr1.Engagement_ID as engagement_id,
+	pr1.Cohort as cohort,
+	pr1.Market as market,
+	pr1.Site as site,
+	pr1.Program_Manager as program_manager,
+
+	case 
+		when pr1.[7_performance_meets_requirements] = 'Always' then 5
+		when pr1.[7_performance_meets_requirements] = 'Often' then 4
+		when pr1.[7_performance_meets_requirements] = 'Sometimes' then 3
+		when pr1.[7_performance_meets_requirements] = 'Rarely' then 2
+		when pr1.[7_performance_meets_requirements] = 'Never' then 1
+		else 9999999999
+	end as q7_performance_job_requirements,
+
+	case 
+		when pr1.[3_professional_business_communication_skills] = 'Always' then 5
+		when pr1.[3_professional_business_communication_skills] = 'Often' then 4
+		when pr1.[3_professional_business_communication_skills] = 'Sometimes' then 3
+		when pr1.[3_professional_business_communication_skills] = 'Rarely' then 2
+		when pr1.[3_professional_business_communication_skills] = 'Never' then 1
+		else 9999999999
+	end as q3_professional_skills_job_requirements,
+
+	case 
+		when pr1.[6_knowledge_skills_ability] = 'Always' then 5
+		when pr1.[6_knowledge_skills_ability] = 'Often' then 4
+		when pr1.[6_knowledge_skills_ability] = 'Sometimes' then 3
+		when pr1.[6_knowledge_skills_ability] = 'Rarely' then 2
+		when pr1.[6_knowledge_skills_ability] = 'Never' then 1
+		else 9999999999
+	end as q6_technical_knowledge_skills_ability_job_requirements,
+
+	case 
+		when pr1.[12_satisfied_year_up_quality_service_support] = 'Completely satisfied' then 5
+		when pr1.[12_satisfied_year_up_quality_service_support] = 'Very satisfied' then 4
+		when pr1.[12_satisfied_year_up_quality_service_support] = 'Moderately satisfied' then 3
+		when pr1.[12_satisfied_year_up_quality_service_support] = 'Slightly satisfied' then 2
+		when pr1.[12_satisfied_year_up_quality_service_support] = 'Not at all satisfied' then 1
+		else 9999999999
+	end as q12_manager_satisfaction_with_yu_support,	
+
+	case
+		when pr1.[13_recommend_for_hire] = 'Completely likely' then 5
+		when pr1.[13_recommend_for_hire] = 'Very likely' then 4
+		when pr1.[13_recommend_for_hire] = 'Moderately likely' then 3
+		when pr1.[13_recommend_for_hire] = 'Slightly likely' then 2
+		when pr1.[13_recommend_for_hire] = 'Not at all likely' then 1
+		when pr1.[13_recommend_for_hire] = 'I do not know at this time.' then NULL
+		else 9999999999
+	end as q13_recommended_for_hire
+
+
+from performance_review_1_results_materialized as pr1
+
+where kpi_completion = 'Yes'
+
+```
+
+
+```{r}
+str(pr1_raw)
+```
+
+## Wrangle
+
+Need to make the following changes to the data types:
+
+1. All answer values to integer.
+2. All dates converted from character to date.
+
+```{r}
+pr1_wrangled <- pr1_raw
+
+# replace all nulls for q13 with blanks
+#pr1_raw$q13_recommended_for_hire <- pr1_raw$q13_recommended_for_hire %>% replace(.=="NULL",NA)
+
+# convert cohort to date
+pr1_wrangled$cohort <- as_date(as.yearmon(pr1_wrangled$cohort))
+
+# convert all questions to integer
+pr1_wrangled$q7_performance_job_requirements <- as.integer(pr1_wrangled$q7_performance_job_requirements)
+pr1_wrangled$q3_professional_skills_job_requirements <- as.integer(pr1_wrangled$q3_professional_skills_job_requirements)
+pr1_wrangled$q6_technical_knowledge_skills_ability_job_requirements <- as.integer(pr1_wrangled$q6_technical_knowledge_skills_ability_job_requirements)
+pr1_wrangled$q12_manager_satisfaction_with_yu_support <- as.integer(pr1_wrangled$q12_manager_satisfaction_with_yu_support)
+pr1_wrangled$q13_recommended_for_hire <- as.integer(pr1_wrangled$q13_recommended_for_hire)
+
+str(pr1_wrangled)
+```
+
+
+
+## Testing matrix
+
+The purpose of this section is to create a data frame containing all possible comparisons for each testing combination. These will be later used with for loops to run the comparisons. Combinations are:
+
+1. _part: Within the same cohort, one group vs all the rest.
+2. _hist_off: one group vs. its like group from the most recent cohort (eg. Jan 2020 vs. July 2019). 
+3. _hist_on: one group vs. its like group from the last like cohort (eg. Jan 2020 vs Jan 2019).
+4. _hist_avg: one group vs. its like group for the past 3 cohorts (eg. Jan 2020 vs. July 2019, Jan 2019, July 2018)
+
+For all historical comparisons, if a valid historical cohort does not exist there is no comparison to make. The data frames will be constructed such that the base cohort (A) is the earlier value and the comparison cohort (B) is the later value.
+
+The following chunk of code creates the base testing matrix.
+```{r}
+# get the base of factors deduplicated
+testing_matrix <- 
+  pr1_wrangled[c(2, 3, 4, 5)] %>% 
+  distinct()
+
+# add kpi columns
+kpi_columns <- c(6, 7, 8, 9, 10)
+
+testing_matrix <- merge(x = testing_matrix, y = kpi_columns, by = NULL)
+
+colnames(testing_matrix) <- c("base_cohort", "market", "site", "program_manager", "kpi_column")
+
+# reduce to grain
+testing_matrix <- testing_matrix[c(1, 3, 5)]
+colnames(testing_matrix) <- c("base_cohort", "grain_value", "kpi_column")
+
+datatable(head(testing_matrix))
+```
+
+### _part
+
+```{r}
+
+testing_matrix_part <- 
+  testing_matrix %>% 
+  distinct()
+
+datatable(head(testing_matrix_part))
+```
+
+### _hist_off
+
+First, prepare the testing matrix.
+
+```{r}
+# add a comparison cohort
+comp_cohort <- 
+  pr1_wrangled[c(2, 4)] %>% 
+  distinct()
+
+colnames(comp_cohort) <- c("comparison_cohort", "grain_value")
+
+testing_matrix_hist_off <- merge(x = testing_matrix, y = comp_cohort, by = "grain_value")
+
+# spin for historical comparison
+testing_matrix_hist_off <- 
+  testing_matrix_hist_off %>%
+  filter((as_date(comparison_cohort) + months(6)) == as_date(base_cohort)) %>%
+  distinct()
+  
+datatable(head(testing_matrix_hist_off))
+```
+
+
+
+# Testing prep
+
+## Load functions that will be used to run the tests
+
+Note well- the functions below are authored by John Kruschke and shared as part of 2nd edition of his textbook *Doing Bayesian Data Analysis*, which can be found at this [Amazon link](https://www.amazon.com/Doing-Bayesian-Data-Analysis-Tutorial/dp/0124058884/ref=asc_df_0124058884/?tag=hyprod-20&linkCode=df0&hvadid=312064598816&hvpos=1o1&hvnetw=g&hvrand=10613851707675271266&hvpone=&hvptwo=&hvqmt=&hvdev=c&hvdvcmdl=&hvlocint=&hvlocphy=9002004&hvtargid=pla-685415040152&psc=1). 
+
+The source script is entitled "Jags-Yord-Xnom2grp-MnormalHet.R" and can be found on this [website](https://sites.google.com/site/doingbayesiandataanalysis/software-installation). The code is from chapter 23, page 683. This chapter will provide the mathematical basis for the test being run.
+
+The following code block creates three functions:
+
+1. genMCMC
+2. smrMCMC
+3. plotMCMC
+
+```{r}
+# Jags-Yord-Xnom2grp-MnormalHet.R
+# Accompanies the book:
+#   Kruschke, J. K. (2015). Doing Bayesian Data Analysis, Second Edition:
+#   A Tutorial with R, JAGS, and Stan. Academic Press / Elsevier.
+
+source("DBDA2E-utilities.R")
+
+# ===============================================================================
+
+genMCMC <- function(datFrm, yName, xName,
+                    numSavedSteps = 50000, thinSteps = 1, saveName = NULL,
+                    runjagsMethod = runjagsMethodDefault,
+                    nChains = nChainsDefault) {
+  #-----------------------------------------------------------------------------
+  # THE DATA.
+  y <- as.numeric(datFrm[, yName])
+  x <- as.numeric(as.factor(datFrm[, xName]))
+  xLevels <- levels(as.factor(datFrm[, xName]))
+  # Do some checking that data make sense:
+  if (any(x != 1 & x != 2)) {
+    stop("All x values must be 1 or 2.")
+  }
+  if (any(y != round(y))) {
+    stop("All y values must be integers (whole numbers).")
+  }
+  if (any(y < 1)) {
+    stop("All y values must be 1 or larger.")
+  }
+  # COMPRESS OUT ANY EMPTY VALUES OF Y:
+  yOrig <- y
+  y <- as.numeric(factor(y, levels = names(table(y))))
+  if (any(y != yOrig)) {
+    cat("************************************************\n")
+    cat("** WARNING: Y RE-CODED TO REMOVE EMPTY LEVELS **\n")
+    cat("************************************************\n")
+  }
+  Ntotal <- length(y)
+  # Threshold 1 and nYlevels-1 are fixed; other thresholds are estimated.
+  # This allows all parameters to be interpretable on the response scale.
+  nYlevels <- max(y)
+  thresh <- rep(NA, nYlevels - 1)
+  thresh[1] <- 1 + 0.5
+  thresh[nYlevels - 1] <- nYlevels - 1 + 0.5
+  # Specify the data in a list, for later shipment to JAGS:
+  dataList <- list(
+    y = y,
+    nYlevels = nYlevels,
+    thresh = thresh,
+    x = x,
+    Ntotal = Ntotal
+  )
+  #-----------------------------------------------------------------------------
+  # THE MODEL.
+  modelString <- "
+  model {
+    for ( i in 1:Ntotal ) {
+      y[i] ~ dcat( pr[i,1:nYlevels] )
+      pr[i,1] <- pnorm( thresh[1] , mu[x[i]] , 1/sigma[x[i]]^2 )
+      for ( k in 2:(nYlevels-1) ) {
+        pr[i,k] <- max( 0 ,  pnorm( thresh[ k ] , mu[x[i]] , 1/sigma[x[i]]^2 )
+                           - pnorm( thresh[k-1] , mu[x[i]] , 1/sigma[x[i]]^2 ) )
+      }
+      pr[i,nYlevels] <- 1 - pnorm( thresh[nYlevels-1] , mu[x[i]] , 1/sigma[x[i]]^2 )
+    }
+    for ( j in 1:2 ) { # 2 groups
+      mu[j] ~ dnorm( (1+nYlevels)/2 , 1/(nYlevels)^2 )
+      sigma[j] ~ dunif( nYlevels/1000 , nYlevels*10 )
+    }
+    for ( k in 2:(nYlevels-2) ) {  # 1 and nYlevels-1 are fixed, not stochastic
+      thresh[k] ~ dnorm( k+0.5 , 1/2^2 )
+    }
+  }
+  " # close quote for modelString
+  # Write out modelString to a text file
+  writeLines(modelString, con = "TEMPmodel.txt")
+  #-----------------------------------------------------------------------------
+  # INTIALIZE THE CHAINS.
+  # Let JAGS do it...
+  #-----------------------------------------------------------------------------
+  # RUN THE CHAINS
+  parameters <- c("mu", "sigma", "thresh")
+  adaptSteps <- 500 # Number of steps to "tune" the samplers
+  burnInSteps <- 1000
+  runJagsOut <- run.jags(
+    method = runjagsMethod,
+    model = "TEMPmodel.txt",
+    monitor = parameters,
+    data = dataList,
+    # inits=initsList ,
+    n.chains = nChains,
+    adapt = adaptSteps,
+    burnin = burnInSteps,
+    sample = ceiling(numSavedSteps / nChains),
+    thin = thinSteps,
+    summarise = FALSE,
+    plots = FALSE
+  )
+  codaSamples <- as.mcmc.list(runJagsOut)
+  # resulting codaSamples object has these indices:
+  #   codaSamples[[ chainIdx ]][ stepIdx , paramIdx ]
+  if (!is.null(saveName)) {
+    save(codaSamples, file = paste(saveName, "Mcmc.Rdata", sep = ""))
+  }
+  return(codaSamples)
+} # end function
+
+# ===============================================================================
+
+smryMCMC <- function(codaSamples, RopeMuDiff = NULL, RopeSdDiff = NULL,
+                     RopeEff = NULL, saveName = NULL) {
+  summaryInfo <- NULL
+  mcmcMat <- as.matrix(codaSamples, chains = TRUE)
+  summaryInfo <- rbind(summaryInfo,
+    "mu[1]" = summarizePost(mcmcMat[, "mu[1]"])
+  )
+  summaryInfo <- rbind(summaryInfo,
+    "mu[2]" = summarizePost(mcmcMat[, "mu[2]"])
+  )
+  summaryInfo <- rbind(summaryInfo,
+    "muDiff" = summarizePost(
+      mcmcMat[, "mu[2]"] - mcmcMat[, "mu[1]"],
+      compVal = 0.0, ROPE = RopeMuDiff
+    )
+  )
+  summaryInfo <- rbind(summaryInfo,
+    "sigma[1]" = summarizePost(mcmcMat[, "sigma[1]"])
+  )
+  summaryInfo <- rbind(summaryInfo,
+    "sigma[2]" = summarizePost(mcmcMat[, "sigma[2]"])
+  )
+  summaryInfo <- rbind(summaryInfo,
+    "sigmaDiff" = summarizePost(
+      mcmcMat[, "sigma[2]"] - mcmcMat[, "sigma[1]"],
+      compVal = 0.0, ROPE = RopeSdDiff
+    )
+  )
+  summaryInfo <- rbind(summaryInfo,
+    "effSz" = summarizePost(
+      (mcmcMat[, "mu[2]"] - mcmcMat[, "mu[1]"])
+      / sqrt((mcmcMat[, "sigma[1]"]^2 + mcmcMat[, "sigma[2]"]^2) / 2),
+      compVal = 0.0, ROPE = RopeEff
+    )
+  )
+  for (colName in grep("thresh", colnames(mcmcMat), value = TRUE)) {
+    summaryInfo <- rbind(
+      summaryInfo,
+      summarizePost(mcmcMat[, colName])
+    )
+    rownames(summaryInfo)[nrow(summaryInfo)] <- colName
+  }
+  if (!is.null(saveName)) {
+    write.csv(summaryInfo, file = paste(saveName, "SummaryInfo.csv", sep = ""))
+  }
+  return(summaryInfo)
+}
+
+# ===============================================================================
+
+plotMCMC <- function(codaSamples, datFrm, yName = "y", xName = "x",
+                     RopeMuDiff = NULL, RopeSdDiff = NULL, RopeEff = NULL,
+                     showCurve = FALSE, pairsPlot = FALSE,
+                     saveName = NULL, saveType = "jpg") {
+  # RopeMuDiff is a two element vector, such as c(-1,1), specifying the limit
+  #   of the ROPE on the difference of means.
+  # RopeSdDiff is a two element vector, such as c(-1,1), specifying the limit
+  #   of the ROPE on the difference of standard deviations.
+  # RopeEff is a two element vector, such as c(-1,1), specifying the limit
+  #   of the ROPE on the effect size.
+  # showCurve is TRUE or FALSE and indicates whether the posterior should
+  #   be displayed as a histogram (by default) or by an approximate curve.
+  # pairsPlot is TRUE or FALSE and indicates whether scatterplots of pairs
+  #   of parameters should be displayed.
+  #-----------------------------------------------------------------------------
+  mcmcMat <- as.matrix(codaSamples, chains = TRUE)
+  chainLength <- NROW(mcmcMat)
+  mu1 <- mcmcMat[, "mu[1]"]
+  mu2 <- mcmcMat[, "mu[2]"]
+  sigma1 <- mcmcMat[, "sigma[1]"]
+  sigma2 <- mcmcMat[, "sigma[2]"]
+  #-----------------------------------------------------------------------------
+  if (pairsPlot) {
+    # Plot the parameters pairwise, to see correlations:
+    openGraph(width = 7, height = 7)
+    nPtToPlot <- 1000
+    plotIdx <- floor(seq(1, length(mu1), by = length(mu1) / nPtToPlot))
+    panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...) {
+      usr <- par("usr")
+      on.exit(par(usr))
+      par(usr = c(0, 1, 0, 1))
+      r <- (cor(x, y))
+      txt <- format(c(r, 0.123456789), digits = digits)[1]
+      txt <- paste(prefix, txt, sep = "")
+      if (missing(cex.cor)) cex.cor <- 0.8 / strwidth(txt)
+      text(0.5, 0.5, txt, cex = 1.25) # was cex=cex.cor*r
+    }
+    pairs(cbind(mu1, sigma1, mu2, sigma2)[plotIdx, ],
+      labels = c(
+        expression(mu[1]), expression(sigma[1]),
+        expression(mu[2]), expression(sigma[2])
+      ),
+      lower.panel = panel.cor, col = "skyblue"
+    )
+    if (!is.null(saveName)) {
+      saveGraph(file = paste(saveName, "PostPairs", sep = ""), type = saveType)
+    }
+  }
+  #-----------------------------------------------------------------------------
+  # Plot thresholds:
+  threshCols <- grep("thresh", colnames(mcmcMat), value = TRUE)
+  threshMean <- rowMeans(mcmcMat[, threshCols])
+  xLim <- range(mcmcMat[, threshCols])
+  nPtToPlot <- 1000
+  plotIdx <- floor(seq(1, nrow(mcmcMat), length = nPtToPlot))
+  openGraph(width = 7.0, height = 5.0)
+  par(mar = c(3.5, 3.5, 1, 1), mgp = c(2.25, 0.7, 0))
+  plot(mcmcMat[plotIdx, threshCols[1]], threshMean[plotIdx],
+    col = "skyblue",
+    xlim = xLim, xlab = "Threshold", ylab = "Mean Threshold"
+  )
+  abline(v = mean(mcmcMat[plotIdx, threshCols[1]]), lty = "dashed", col = "skyblue")
+  for (i in 2:length(threshCols)) {
+    points(mcmcMat[plotIdx, threshCols[i]], threshMean[plotIdx], col = "skyblue")
+    abline(v = mean(mcmcMat[plotIdx, threshCols[i]]), lty = "dashed", col = "skyblue")
+  }
+  if (!is.null(saveName)) {
+    saveGraph(file = paste0(saveName, "Thresh"), type = saveType)
+  }
+  #-----------------------------------------------------------------------------
+  # Set up window and layout:
+  openGraph(width = 6.0, height = 8.0)
+  layout(matrix(c(4, 5, 7, 8, 3, 1, 2, 6, 9, 10), nrow = 5, byrow = FALSE))
+  par(mar = c(3.5, 3.5, 2.5, 0.5), mgp = c(2.25, 0.7, 0))
+  # Compute limits for plots of data with posterior pred. distributions
+  y <- as.numeric(datFrm[, yName])
+  # COMPRESS OUT ANY EMPTY VALUES OF Y:
+  yOrig <- y
+  y <- as.numeric(factor(y, levels = names(table(y))))
+  if (any(y != yOrig)) {
+    warning("*** WARNING: Y RE-CODED TO REMOVE EMPTY LEVELS ***")
+  }
+  x <- as.numeric(as.factor(datFrm[, xName]))
+  xLevels <- levels(as.factor(datFrm[, xName]))
+  y1 <- y[x == 1]
+  y2 <- y[x == 2]
+  xLim <- c(min(y) - 0.5, max(y) + 0.5)
+  xBreaks <- seq(xLim[1], xLim[2], 1)
+  histInfo1 <- hist(y1, breaks = xBreaks, plot = FALSE)
+  histInfo2 <- hist(y2, breaks = xBreaks, plot = FALSE)
+  yMax <- 1.2 * max(c(histInfo1$density, histInfo2$density))
+  xVec <- seq(xLim[1], xLim[2], length = 501)
+  #-----------------------------------------------------------------------------
+  # Plot data y1 and smattering of posterior predictive curves:
+  # Data histogram:
+  histInfo <- hist(y1,
+    prob = TRUE, xlim = xLim, ylim = c(0, yMax), breaks = xBreaks,
+    col = "pink", border = "white", xlab = "y", ylab = "",
+    yaxt = "n", cex.lab = 1.5,
+    main = paste("Data for", xLevels[1], "w. Post. Pred.")
+  )
+  # Posterior predictive probabilities of outcomes:
+  outProb <- matrix(0, nrow = chainLength, ncol = max(y))
+  for (stepIdx in 1:chainLength) {
+    threshCumProb <- (pnorm((mcmcMat[
+      stepIdx,
+      paste("thresh[", 1:(max(y) - 1), "]", sep = "")
+    ]
+    - mu1[stepIdx])
+    / sigma1[stepIdx]))
+    outProb[stepIdx, ] <- c(threshCumProb, 1) - c(0, threshCumProb)
+  }
+  outHdi <- apply(outProb, 2, HDIofMCMC)
+  outMean <- apply(outProb, 2, median, na.rm = TRUE)
+  show(outMean)
+  points(x = 1:max(y), y = outMean, pch = 19, cex = 2, col = "skyblue")
+  segments(
+    x0 = 1:max(y), y0 = outHdi[1, ],
+    x1 = 1:max(y), y1 = outHdi[2, ], lwd = 4, col = "skyblue"
+  )
+  # Annotate N:
+  text(max(xVec), yMax, bquote(N[1] == .(length(y1))), adj = c(1.1, 1.1))
+  #-----------------------------------------------------------------------------
+  # Plot data y2 and smattering of posterior predictive curves:
+  # Data histogram:
+  histInfo <- hist(y2,
+    prob = TRUE, xlim = xLim, ylim = c(0, yMax), breaks = xBreaks,
+    col = "pink", border = "white", xlab = "y", ylab = "",
+    yaxt = "n", cex.lab = 1.5,
+    main = paste("Data for", xLevels[2], "w. Post. Pred.")
+  )
+  # Posterior predictive probabilities of outcomes:
+  outProb <- matrix(0, nrow = chainLength, ncol = max(y))
+  for (stepIdx in 1:chainLength) {
+    threshCumProb <- (pnorm((mcmcMat[
+      stepIdx,
+      paste("thresh[", 1:(max(y) - 1), "]", sep = "")
+    ]
+    - mu2[stepIdx])
+    / sigma2[stepIdx]))
+    outProb[stepIdx, ] <- c(threshCumProb, 1) - c(0, threshCumProb)
+  }
+  outHdi <- apply(outProb, 2, HDIofMCMC)
+  outMean <- apply(outProb, 2, median, na.rm = TRUE)
+  show(outMean)
+  points(x = 1:max(y), y = outMean, pch = 19, cex = 2, col = "skyblue")
+  segments(
+    x0 = 1:max(y), y0 = outHdi[1, ],
+    x1 = 1:max(y), y1 = outHdi[2, ], lwd = 4, col = "skyblue"
+  )
+  # Annotate N:
+  text(max(xVec), yMax, bquote(N[2] == .(length(y2))), adj = c(1.1, 1.1))
+  #-----------------------------------------------------------------------------  
+  threshCols <- grep("thresh", colnames(mcmcMat), value = TRUE)
+  threshMean <- rowMeans(mcmcMat[, threshCols])
+  xLim <- range(mcmcMat[, threshCols])
+  nPtToPlot <- 500
+  plotIdx <- floor(seq(1, nrow(mcmcMat), length = nPtToPlot))
+  plot(mcmcMat[plotIdx, threshCols[1]], threshMean[plotIdx],
+    col = "skyblue",
+    xlim = xLim, xlab = "Threshold", ylab = "Mean Threshold"
+  )
+  abline(v = mean(mcmcMat[plotIdx, threshCols[1]]), lty = "dashed", col = "skyblue")
+  for (i in 2:length(threshCols)) {
+    points(mcmcMat[plotIdx, threshCols[i]], threshMean[plotIdx], col = "skyblue")
+    abline(v = mean(mcmcMat[plotIdx, threshCols[i]]), lty = "dashed", col = "skyblue")
+  }
+  #   # Blank plot (was occupied by nu parameter in robust version)
+  #   plot(1, ann=FALSE, axes=FALSE, xlim=c(0,1) , ylim=c(0,1) ,
+  #        type="n" , xaxs="i" , yaxs="i" )
+  #   text(.5,.5,"[assumes y~normal]",adj=c(.5,.5))
+  #-----------------------------------------------------------------------------
+  # Plot posterior distribution of parameters mu1, mu2, and their difference:
+  xlim <- range(c(mu1, mu2))
+  histInfo <- plotPost(mu1,
+    xlim = xlim, cex.lab = 1.75,
+    showCurve = showCurve,
+    xlab = bquote(mu[1]), main = paste(xLevels[1], "Mean"),
+    col = "skyblue"
+  )
+  histInfo <- plotPost(mu2,
+    xlim = xlim, cex.lab = 1.75,
+    showCurve = showCurve,
+    xlab = bquote(mu[2]), main = paste(xLevels[2], "Mean"),
+    col = "skyblue"
+  )
+  histInfo <- plotPost(mu2 - mu1,
+    compVal = 0, showCurve = showCurve,
+    xlab = bquote(mu[2] - mu[1]), cex.lab = 1.75,
+    ROPE = RopeMuDiff,
+    main = "Difference of Means", col = "skyblue"
+  )
+  #-----------------------------------------------------------------------------
+  # Plot posterior distribution of param's sigma1, sigma2, and their difference:
+  xlim <- range(c(sigma1, sigma2))
+  histInfo <- plotPost(sigma1,
+    xlim = xlim, cex.lab = 1.75,
+    showCurve = showCurve,
+    xlab = bquote(sigma[1]),
+    main = paste(xLevels[1], "Std. Dev."),
+    col = "skyblue"
+  )
+  histInfo <- plotPost(sigma2,
+    xlim = xlim, cex.lab = 1.75,
+    showCurve = showCurve,
+    xlab = bquote(sigma[2]),
+    main = paste(xLevels[2], "Std. Dev."),
+    col = "skyblue"
+  )
+  histInfo <- plotPost(sigma2 - sigma1,
+    compVal = 0, showCurve = showCurve,
+    xlab = bquote(sigma[2] - sigma[1]), cex.lab = 1.75,
+    ROPE = RopeSdDiff,
+    main = "Difference of Std. Dev's", col = "skyblue"
+  )
+  #-----------------------------------------------------------------------------
+  # Plot effect size.
+  effectSize <- (mu2 - mu1) / sqrt((sigma1^2 + sigma2^2) / 2)
+  histInfo <- plotPost(effectSize,
+    compVal = 0, ROPE = RopeEff,
+    showCurve = showCurve,
+    xlab = bquote((mu[2] - mu[1])
+    / sqrt((sigma[1]^2 + sigma[2]^2) / 2)),
+    cex.lab = 1.0, main = "Effect Size",
+    col = "skyblue"
+  )
+  #-----------------------------------------------------------------------------
+  if (!is.null(saveName)) {
+    saveGraph(file = paste(saveName, "Post", sep = ""), type = saveType)
+  }
+}
+
+# ===============================================================================
+```
+
+# Identify credible differences using _hist_off
+
+Generate a blank data frame with a schema to accept testing results.
+```{r}
+# generate empty data frame to accept testing results
+results_hist_off <- data.frame(base_cohort = ymd("1900-01-01"), comparison_cohort = ymd("1900-01-01"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
+
+
+results_hist_off <- results_hist_off[-1, ]
+results_hist_off$grain_value <- as.character(results_hist_off$grain_value)
+
+```
+
+Use a for loop to iterate over the relevant testing matrix. 
+```{r echo=T, results='hide'}
+# create a two column data frame with group labels and response values for mcmc generation.
+for (i in 1:nrow(testing_matrix_hist_off)) {
+
+  a <- ymd(testing_matrix_hist_off[i, 2])
+  b <- testing_matrix_hist_off[i, 1]
+  c <- testing_matrix_hist_off[i, 3]
+  d <- ymd(testing_matrix_hist_off[i, 4])
+
+  # name eventual columns
+  group_column_names <- c("value", "group")
+
+  # move from raw data to group 1
+  group_1 <- filter(pr1_wrangled, cohort == a & site == b)
+  group_1 <- as.data.frame(group_1[, c])
+  group_1$group <- "A"
+  names(group_1) <- group_column_names
+
+  # move from raw data to group 2
+  group_2 <- filter(pr1_wrangled, cohort == d & site == b)
+  group_2 <- as.data.frame(group_2[, c])
+  group_2$group <- "B"
+  names(group_2) <- group_column_names
+
+  # union group 1 & 2 to create one data frame
+  pr1_grouped <- bind_rows(group_1, group_2)
+  pr1_grouped <- pr1_grouped[c(2, 1)]
+
+  # convert group column to a factor and value column to int
+  pr1_grouped$group <- as.factor(pr1_grouped$group)
+  pr1_grouped$value <- as.integer(pr1_grouped$value)
+
+  # remove na values
+  pr1_grouped <- na.omit(pr1_grouped)
+
+  # declare columns for mcmc_coda function
+  names(pr1_grouped) <- c("X", "Y")
+
+  myDataFrame_hist_off <- as.data.frame(pr1_grouped)
+
+  yName <- "Y"
+  xName <- "X"
+
+  # generate MCMC chain
+  mcmc_coda_hist_off <- genMCMC(
+    datFrm = myDataFrame_hist_off,
+    yName = yName,
+    xName = xName,
+    numSavedSteps = 12000,
+    thinSteps = 3
+  )
+
+  # grab all parameter names
+  parameter_names_hist_off <- varnames(mcmc_coda_hist_off)
+
+  # get summary statistics of chain
+  summary_info_hist_off <- smryMCMC(
+    mcmc_coda_hist_off,
+    RopeMuDiff = c(-0.2, 0.2),
+    RopeSdDiff = c(-0.2, 0.2),
+    RopeEff = c(-0.1, 0.1)
+  )
+  summary_info_hist_off
+
+  # save relevant summary statistics
+  temp_results_hist_off <- summary_info_hist_off[, c(12, 13, 14)]
+  temp_results_hist_off <- temp_results_hist_off[7, ]
+
+  results_hist_off[nrow(results_hist_off) + 1, ] <- list(ymd(a), ymd(d), b, c, temp_results_hist_off[1], temp_results_hist_off[2], temp_results_hist_off[3])
+}
+```
+
+Flip results into an export ready format.
+```{r}
+# translate kpi column to kpi number
+final_results_hist_off <- results_hist_off
+final_results_hist_off$kpi_columns <- as.character(final_results_hist_off$kpi_columns)
+
+# https://stackoverflow.com/questions/13871614/replacing-values-from-a-column-using-a-condition-in-r
+final_results_hist_off$kpi_columns[final_results_hist_off$kpi_columns == "6"] <- "q7_performance_job_requirements"
+final_results_hist_off$kpi_columns[final_results_hist_off$kpi_columns == "7"] <- "q3_professional_skills_job_requirements"
+final_results_hist_off$kpi_columns[final_results_hist_off$kpi_columns == "8"] <- "q6_technical_knowledge_skills_ability_job_requirements"
+final_results_hist_off$kpi_columns[final_results_hist_off$kpi_columns == "9"] <- "q12_manager_satisfaction_with_yu_support"
+final_results_hist_off$kpi_columns[final_results_hist_off$kpi_columns == "10"] <- "q13_recommended_for_hire"
+
+# rename columns
+colnames(final_results_hist_off) <- c("base_cohort", "comparison_cohort", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
+
+
+# export to csv
+# write.csv(final_results_hist_off, "pr1_final_results_hist_off.csv")
+
+```
+
+
+
+# Identify credible differences using _part
+
+Generate a blank data frame with a schema to accept testing results.
+```{r}
+
+# generate empty data frame to accept testing results
+results_part <- data.frame(base_cohort = ymd("1900-01-01"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
+
+results_part <- results_part[-1, ]
+results_part$grain_value <- as.character(results_part$grain_value)
+
+```
+
+Use a for loop to iterate over the relevant testing matrix. 
+```{r echo=T, results='hide'}
+
+# create a two column data frame with group labels and response values for mcmc generation.
+for (k in 1:nrow(testing_matrix_part)) {
+  
+  e <- ymd(testing_matrix_part[k, 1])
+  f <- testing_matrix_part[k, 2]
+  g <- testing_matrix_part[k, 3]
+
+
+  # name eventual columns
+  group_column_names <- c("value", "group")
+
+  # move from raw data to group 1
+  group_1_specific <- filter(pr1_wrangled, cohort == e & site == f)
+  group_1_specific <- as.data.frame(group_1_specific[, g])
+  group_1_specific$group <- "A"
+  names(group_1_specific) <- group_column_names
+
+  # move from raw data to full org for group 1
+  group_1_all <- filter(pr1_wrangled, cohort == e & site != f)
+  group_1_all <- as.data.frame(group_1_all[, g])
+  group_1_all$group <- "B"
+  names(group_1_all) <- group_column_names
+
+  # union group 1 & 2 to create one data frame
+  pr1_grouped_part <- bind_rows(group_1_specific, group_1_all)
+  pr1_grouped_part <- pr1_grouped_part[c(2, 1)]
+
+  # convert group column to a factor and value column to int
+  pr1_grouped_part$group <- as.factor(pr1_grouped_part$group)
+  pr1_grouped_part$value <- as.integer(pr1_grouped_part$value)
+
+  # remove na values
+  pr1_grouped_part <- na.omit(pr1_grouped_part)
+
+  # declare columns for mcmc_coda function
+  names(pr1_grouped_part) <- c("X", "Y")
+
+  myDataFrame_part <- as.data.frame(pr1_grouped_part)
+
+  yName <- "Y"
+  xName <- "X"
+
+  # generate MCMC chain
+  mcmc_coda_part <- genMCMC(
+    datFrm = myDataFrame_part,
+    yName = yName,
+    xName = xName,
+    numSavedSteps = 12000,
+    thinSteps = 3
+  )
+
+  # grab all parameter names
+  parameter_names_part <- varnames(mcmc_coda_part)
+
+  # get summary statistics of chain
+  summary_info_part <- smryMCMC(
+    mcmc_coda_part,
+    RopeMuDiff = c(-0.2, 0.2),
+    RopeSdDiff = c(-0.2, 0.2),
+    RopeEff = c(-0.1, 0.1)
+  )
+  summary_info_part
+
+  # save relevant summary statistics
+  temp_results_part <- summary_info_part[, c(12, 13, 14)]
+  temp_results_part <- temp_results_part[7, ]
+
+  results_part[nrow(results_part) + 1, ] <- list(ymd(e), f, g, temp_results_part[1], temp_results_part[2], temp_results_part[3])
+}
+```
+
+Flip results into an export ready format.
+```{r}
+# translate kpi column to kpi number
+final_results_part <- results_part
+final_results_part$kpi_columns <- as.character(final_results_part$kpi_columns)
+
+# https://stackoverflow.com/questions/13871614/replacing-values-from-a-column-using-a-condition-in-r
+final_results_part$kpi_columns[final_results_part$kpi_columns == "6"] <- "q7_performance_job_requirements"
+final_results_part$kpi_columns[final_results_part$kpi_columns == "7"] <- "q3_professional_skills_job_requirements"
+final_results_part$kpi_columns[final_results_part$kpi_columns == "8"] <- "q6_technical_knowledge_skills_ability_job_requirements"
+final_results_part$kpi_columns[final_results_part$kpi_columns == "9"] <- "q12_manager_satisfaction_with_yu_support"
+final_results_part$kpi_columns[final_results_part$kpi_columns == "10"] <- "q13_recommended_for_hire"
+
+# rename columns
+colnames(final_results_part) <- c("base_cohort", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
+
+# export to csv
+# write.csv(final_results_part, "pr1_final_results_part.csv")
+
+```
+
+# Merge testing results for export
