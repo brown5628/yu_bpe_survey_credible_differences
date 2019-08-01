@@ -695,8 +695,8 @@ Use a for loop to iterate over the relevant testing matrix.
 ```{r echo=T, results='hide'}
 
 # create a two column data frame with group labels and response values for mcmc generation.
-#for (k in 1:nrow(testing_matrix_part)) {
-k <- 1  
+for (k in 1:nrow(testing_matrix_part)) {
+#k <- 1  
   e <- ymd(testing_matrix_part[k, 1])
   f <- testing_matrix_part[k, 2]
   g <- testing_matrix_part[k, 3]
@@ -762,7 +762,7 @@ k <- 1
   temp_results_part <- temp_results_part[7, ]
 
   results_part[nrow(results_part) + 1, ] <- list(ymd(e),'_part', f, g, temp_results_part[1], temp_results_part[2], temp_results_part[3])
-#}
+}
 ```
 
 Flip results into an export ready format.
@@ -803,8 +803,8 @@ results_hist_off$comparison_type <- as.character(results_hist_off$comparison_typ
 Use a for loop to iterate over the relevant testing matrix. 
 ```{r echo=T, results='hide'}
 # create a two column data frame with group labels and response values for mcmc generation.
-#for (i in 1:nrow(testing_matrix_hist_off)) {
-i <- 1
+for (i in 1:nrow(testing_matrix_hist_off)) {
+#i <- 1
   a <- ymd(testing_matrix_hist_off[i, 2])
   b <- testing_matrix_hist_off[i, 1]
   c <- testing_matrix_hist_off[i, 3]
@@ -870,7 +870,7 @@ i <- 1
   temp_results_hist_off <- temp_results_hist_off[7, ]
 
   results_hist_off[nrow(results_hist_off) + 1, ] <- list(ymd(a), '_hist_off', b, c, temp_results_hist_off[1], temp_results_hist_off[2], temp_results_hist_off[3])
-#}
+}
 ```
 
 Flip results into an export ready format.
@@ -913,8 +913,8 @@ results_hist_on$comparison_type <- as.character(results_hist_on$comparison_type)
 Use a for loop to iterate over the relevant testing matrix. 
 ```{r echo=T, results='hide'}
 # create a two column data frame with group labels and response values for mcmc generation.
-#for (j in 1:nrow(testing_matrix_hist_on)) {
-j <- 1
+for (j in 1:nrow(testing_matrix_hist_on)) {
+#j <- 1
   w <- ymd(testing_matrix_hist_on[j, 2])
   x <- testing_matrix_hist_on[j, 1]
   y <- testing_matrix_hist_on[j, 3]
@@ -980,7 +980,7 @@ j <- 1
   temp_results_hist_on <- temp_results_hist_on[7, ]
 
   results_hist_on[nrow(results_hist_on) + 1, ] <- list(ymd(a), '_hist_on', b, c, temp_results_hist_on[1], temp_results_hist_on[2], temp_results_hist_on[3])
-#}
+}
 ```
 
 Flip results into an export ready format.
@@ -1022,8 +1022,8 @@ results_hist_l3$comparison_type <- as.character(results_hist_l3$comparison_type)
 Use a for loop to iterate over the relevant testing matrix. 
 ```{r echo=T, results='hide'}
 # create a two column data frame with group labels and response values for mcmc generation.
-#for (h in 1:nrow(testing_matrix_hist_l3)) {
-h <- 1
+for (h in 1:nrow(testing_matrix_hist_l3)) {
+#h <- 1
   l <- ymd(testing_matrix_hist_l3[h, 2])
   m <- testing_matrix_hist_l3[h, 1]
   n <- testing_matrix_hist_l3[h, 3]
@@ -1091,7 +1091,7 @@ h <- 1
   temp_results_hist_l3 <- temp_results_hist_l3[7, ]
 
   results_hist_l3[nrow(results_hist_l3) + 1, ] <- list(ymd(a), '_hist_l3', b, c, temp_results_hist_l3[1], temp_results_hist_l3[2], temp_results_hist_l3[3])
-#}
+}
 ```
 
 Flip results into an export ready format.
