@@ -683,10 +683,11 @@ Generate a blank data frame with a schema to accept testing results.
 ```{r}
 
 # generate empty data frame to accept testing results
-results_part <- data.frame(base_cohort = ymd("1900-01-01"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
+results_part <- data.frame(base_cohort = ymd("1900-01-01"), comparison_type = as.character("A"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
 
 results_part <- results_part[-1, ]
 results_part$grain_value <- as.character(results_part$grain_value)
+results_part$comparison_type <- as.character(results_part$comparison_type)
 
 ```
 
@@ -760,7 +761,7 @@ k <- 1
   temp_results_part <- summary_info_part[, c(12, 13, 14)]
   temp_results_part <- temp_results_part[7, ]
 
-  results_part[nrow(results_part) + 1, ] <- list(ymd(e), f, g, temp_results_part[1], temp_results_part[2], temp_results_part[3])
+  results_part[nrow(results_part) + 1, ] <- list(ymd(e),'_part', f, g, temp_results_part[1], temp_results_part[2], temp_results_part[3])
 #}
 ```
 
@@ -778,7 +779,7 @@ final_results_part$kpi_columns[final_results_part$kpi_columns == "9"] <- "q12_ma
 final_results_part$kpi_columns[final_results_part$kpi_columns == "10"] <- "q13_recommended_for_hire"
 
 # rename columns
-colnames(final_results_part) <- c("base_cohort", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
+colnames(final_results_part) <- c("base_cohort","comparison_type", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
 
 # export to csv
 # write.csv(final_results_part, "pr1_final_results_part.csv")
@@ -790,11 +791,12 @@ colnames(final_results_part) <- c("base_cohort", "grain_value", "kpi_question", 
 Generate a blank data frame with a schema to accept testing results.
 ```{r}
 # generate empty data frame to accept testing results
-results_hist_off <- data.frame(base_cohort = ymd("1900-01-01"), comparison_cohort = ymd("1900-01-01"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
+results_hist_off <- data.frame(base_cohort = ymd("1900-01-01"), comparison_type = as.character("A"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
 
 
 results_hist_off <- results_hist_off[-1, ]
 results_hist_off$grain_value <- as.character(results_hist_off$grain_value)
+results_hist_off$comparison_type <- as.character(results_hist_off$comparison_type)
 
 ```
 
@@ -867,7 +869,7 @@ i <- 1
   temp_results_hist_off <- summary_info_hist_off[, c(12, 13, 14)]
   temp_results_hist_off <- temp_results_hist_off[7, ]
 
-  results_hist_off[nrow(results_hist_off) + 1, ] <- list(ymd(a), ymd(d), b, c, temp_results_hist_off[1], temp_results_hist_off[2], temp_results_hist_off[3])
+  results_hist_off[nrow(results_hist_off) + 1, ] <- list(ymd(a), '_hist_off', b, c, temp_results_hist_off[1], temp_results_hist_off[2], temp_results_hist_off[3])
 #}
 ```
 
@@ -885,7 +887,7 @@ final_results_hist_off$kpi_columns[final_results_hist_off$kpi_columns == "9"] <-
 final_results_hist_off$kpi_columns[final_results_hist_off$kpi_columns == "10"] <- "q13_recommended_for_hire"
 
 # rename columns
-colnames(final_results_hist_off) <- c("base_cohort", "comparison_cohort", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
+colnames(final_results_hist_off) <- c("base_cohort", "comparison_type", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
 
 
 # export to csv
@@ -899,11 +901,12 @@ colnames(final_results_hist_off) <- c("base_cohort", "comparison_cohort", "grain
 Generate a blank data frame with a schema to accept testing results.
 ```{r}
 # generate empty data frame to accept testing results
-results_hist_on <- data.frame(base_cohort = ymd("1900-01-01"), comparison_cohort = ymd("1900-01-01"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
+results_hist_on <- data.frame(base_cohort = ymd("1900-01-01"), comparison_type = as.character("A"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
 
 
 results_hist_on <- results_hist_on[-1, ]
 results_hist_on$grain_value <- as.character(results_hist_on$grain_value)
+results_hist_on$comparison_type <- as.character(results_hist_on$comparison_type)
 
 ```
 
@@ -976,7 +979,7 @@ j <- 1
   temp_results_hist_on <- summary_info_hist_on[, c(12, 13, 14)]
   temp_results_hist_on <- temp_results_hist_on[7, ]
 
-  results_hist_on[nrow(results_hist_on) + 1, ] <- list(ymd(a), ymd(d), b, c, temp_results_hist_on[1], temp_results_hist_on[2], temp_results_hist_on[3])
+  results_hist_on[nrow(results_hist_on) + 1, ] <- list(ymd(a), '_hist_on', b, c, temp_results_hist_on[1], temp_results_hist_on[2], temp_results_hist_on[3])
 #}
 ```
 
@@ -994,7 +997,7 @@ final_results_hist_on$kpi_columns[final_results_hist_on$kpi_columns == "9"] <- "
 final_results_hist_on$kpi_columns[final_results_hist_on$kpi_columns == "10"] <- "q13_recommended_for_hire"
 
 # rename columns
-colnames(final_results_hist_on) <- c("base_cohort", "comparison_cohort", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
+colnames(final_results_hist_on) <- c("base_cohort", "comparison_type", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
 
 
 # export to csv
@@ -1007,11 +1010,12 @@ colnames(final_results_hist_on) <- c("base_cohort", "comparison_cohort", "grain_
 Generate a blank data frame with a schema to accept testing results.
 ```{r}
 # generate empty data frame to accept testing results
-results_hist_l3 <- data.frame(base_cohort = ymd("1900-01-01"), comparison_cohort = ymd("1900-01-01"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
+results_hist_l3 <- data.frame(base_cohort = ymd("1900-01-01"), comparison_type = as.character("A"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
 
 
 results_hist_l3 <- results_hist_l3[-1, ]
 results_hist_l3$grain_value <- as.character(results_hist_l3$grain_value)
+results_hist_l3$comparison_type <- as.character(results_hist_l3$comparison_type)
 
 ```
 
@@ -1086,7 +1090,7 @@ h <- 1
   temp_results_hist_l3 <- summary_info_hist_l3[, c(12, 13, 14)]
   temp_results_hist_l3 <- temp_results_hist_l3[7, ]
 
-  results_hist_l3[nrow(results_hist_l3) + 1, ] <- list(ymd(a), ymd(d), b, c, temp_results_hist_l3[1], temp_results_hist_l3[2], temp_results_hist_l3[3])
+  results_hist_l3[nrow(results_hist_l3) + 1, ] <- list(ymd(a), '_hist_l3', b, c, temp_results_hist_l3[1], temp_results_hist_l3[2], temp_results_hist_l3[3])
 #}
 ```
 
@@ -1104,7 +1108,7 @@ final_results_hist_l3$kpi_columns[final_results_hist_l3$kpi_columns == "9"] <- "
 final_results_hist_l3$kpi_columns[final_results_hist_l3$kpi_columns == "10"] <- "q13_recommended_for_hire"
 
 # rename columns
-colnames(final_results_hist_l3) <- c("base_cohort", "comparison_cohort", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
+colnames(final_results_hist_l3) <- c("base_cohort", "comparison_type", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
 
 
 # export to csv
@@ -1113,3 +1117,11 @@ colnames(final_results_hist_l3) <- c("base_cohort", "comparison_cohort", "grain_
 ```
 
 # Merge testing results for export
+
+Want all testing results merged into 1 data frame.
+
+```{r}
+all_results_export <- rbind(final_results_part,final_results_hist_off,final_results_hist_on,final_results_hist_l3)
+
+```
+
