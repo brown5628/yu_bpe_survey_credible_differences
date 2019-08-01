@@ -191,7 +191,7 @@ colnames(testing_matrix) <- c("base_cohort", "market", "site", "program_manager"
 testing_matrix <- testing_matrix[c(1, 3, 5)]
 colnames(testing_matrix) <- c("base_cohort", "grain_value", "kpi_column")
 
-datatable(head(testing_matrix))
+datatable(testing_matrix)
 ```
 
 ### _part
@@ -202,12 +202,10 @@ testing_matrix_part <-
   testing_matrix %>% 
   distinct()
 
-datatable(head(testing_matrix_part))
+datatable(testing_matrix_part)
 ```
 
 ### _hist_off
-
-First, prepare the testing matrix.
 
 ```{r}
 # add a comparison cohort
@@ -225,9 +223,25 @@ testing_matrix_hist_off <-
   filter((as_date(comparison_cohort) + months(6)) == as_date(base_cohort)) %>%
   distinct()
   
-datatable(head(testing_matrix_hist_off))
+datatable(testing_matrix_hist_off)
 ```
 
+### _hist_on
+
+
+```{r}
+# Use comparison cohort from _hist_off
+
+testing_matrix_hist_on <- merge(x = testing_matrix, y = comp_cohort, by = "grain_value")
+
+# spin for historical comparison
+testing_matrix_hist_on <- 
+  testing_matrix_hist_on %>%
+  filter((as_date(comparison_cohort) + months(12)) == as_date(base_cohort)) %>%
+  distinct()
+  
+datatable(testing_matrix_hist_on)
+```
 
 
 # Testing prep
@@ -638,6 +652,114 @@ plotMCMC <- function(codaSamples, datFrm, yName = "y", xName = "x",
 # ===============================================================================
 ```
 
+# Identify credible differences using _part
+
+Generate a blank data frame with a schema to accept testing results.
+```{r}
+
+# generate empty data frame to accept testing results
+results_part <- data.frame(base_cohort = ymd("1900-01-01"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
+
+results_part <- results_part[-1, ]
+results_part$grain_value <- as.character(results_part$grain_value)
+
+```
+
+Use a for loop to iterate over the relevant testing matrix. 
+```{r echo=T, results='hide'}
+
+# create a two column data frame with group labels and response values for mcmc generation.
+#for (k in 1:nrow(testing_matrix_part)) {
+k <- 1  
+  e <- ymd(testing_matrix_part[k, 1])
+  f <- testing_matrix_part[k, 2]
+  g <- testing_matrix_part[k, 3]
+
+
+  # name eventual columns
+  group_column_names <- c("value", "group")
+
+  # move from raw data to group 1
+  group_1_specific <- filter(pr1_wrangled, cohort == e & site == f)
+  group_1_specific <- as.data.frame(group_1_specific[, g])
+  group_1_specific$group <- "A"
+  names(group_1_specific) <- group_column_names
+
+  # move from raw data to full org for group 1
+  group_1_all <- filter(pr1_wrangled, cohort == e & site != f)
+  group_1_all <- as.data.frame(group_1_all[, g])
+  group_1_all$group <- "B"
+  names(group_1_all) <- group_column_names
+
+  # union group 1 & 2 to create one data frame
+  pr1_grouped_part <- bind_rows(group_1_specific, group_1_all)
+  pr1_grouped_part <- pr1_grouped_part[c(2, 1)]
+
+  # convert group column to a factor and value column to int
+  pr1_grouped_part$group <- as.factor(pr1_grouped_part$group)
+  pr1_grouped_part$value <- as.integer(pr1_grouped_part$value)
+
+  # remove na values
+  pr1_grouped_part <- na.omit(pr1_grouped_part)
+
+  # declare columns for mcmc_coda function
+  names(pr1_grouped_part) <- c("X", "Y")
+
+  myDataFrame_part <- as.data.frame(pr1_grouped_part)
+
+  yName <- "Y"
+  xName <- "X"
+
+  # generate MCMC chain
+  mcmc_coda_part <- genMCMC(
+    datFrm = myDataFrame_part,
+    yName = yName,
+    xName = xName,
+    numSavedSteps = 12000,
+    thinSteps = 3
+  )
+
+  # grab all parameter names
+  parameter_names_part <- varnames(mcmc_coda_part)
+
+  # get summary statistics of chain
+  summary_info_part <- smryMCMC(
+    mcmc_coda_part,
+    RopeMuDiff = c(-0.2, 0.2),
+    RopeSdDiff = c(-0.2, 0.2),
+    RopeEff = c(-0.1, 0.1)
+  )
+  summary_info_part
+
+  # save relevant summary statistics
+  temp_results_part <- summary_info_part[, c(12, 13, 14)]
+  temp_results_part <- temp_results_part[7, ]
+
+  results_part[nrow(results_part) + 1, ] <- list(ymd(e), f, g, temp_results_part[1], temp_results_part[2], temp_results_part[3])
+#}
+```
+
+Flip results into an export ready format.
+```{r}
+# translate kpi column to kpi number
+final_results_part <- results_part
+final_results_part$kpi_columns <- as.character(final_results_part$kpi_columns)
+
+# https://stackoverflow.com/questions/13871614/replacing-values-from-a-column-using-a-condition-in-r
+final_results_part$kpi_columns[final_results_part$kpi_columns == "6"] <- "q7_performance_job_requirements"
+final_results_part$kpi_columns[final_results_part$kpi_columns == "7"] <- "q3_professional_skills_job_requirements"
+final_results_part$kpi_columns[final_results_part$kpi_columns == "8"] <- "q6_technical_knowledge_skills_ability_job_requirements"
+final_results_part$kpi_columns[final_results_part$kpi_columns == "9"] <- "q12_manager_satisfaction_with_yu_support"
+final_results_part$kpi_columns[final_results_part$kpi_columns == "10"] <- "q13_recommended_for_hire"
+
+# rename columns
+colnames(final_results_part) <- c("base_cohort", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
+
+# export to csv
+# write.csv(final_results_part, "pr1_final_results_part.csv")
+
+```
+
 # Identify credible differences using _hist_off
 
 Generate a blank data frame with a schema to accept testing results.
@@ -747,68 +869,66 @@ colnames(final_results_hist_off) <- c("base_cohort", "comparison_cohort", "grain
 ```
 
 
-
-# Identify credible differences using _part
+# Identify credible differences using _hist_on
 
 Generate a blank data frame with a schema to accept testing results.
 ```{r}
-
 # generate empty data frame to accept testing results
-results_part <- data.frame(base_cohort = ymd("1900-01-01"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
+results_hist_on <- data.frame(base_cohort = ymd("1900-01-01"), comparison_cohort = ymd("1900-01-01"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
 
-results_part <- results_part[-1, ]
-results_part$grain_value <- as.character(results_part$grain_value)
+
+results_hist_on <- results_hist_on[-1, ]
+results_hist_on$grain_value <- as.character(results_hist_on$grain_value)
 
 ```
 
 Use a for loop to iterate over the relevant testing matrix. 
 ```{r echo=T, results='hide'}
-
 # create a two column data frame with group labels and response values for mcmc generation.
-#for (k in 1:nrow(testing_matrix_part)) {
-k <- 1  
-  e <- ymd(testing_matrix_part[k, 1])
-  f <- testing_matrix_part[k, 2]
-  g <- testing_matrix_part[k, 3]
-
+#for (j in 1:nrow(testing_matrix_hist_on)) {
+j <- 1
+  w <- ymd(testing_matrix_hist_on[j, 2])
+  x <- testing_matrix_hist_on[j, 1]
+  y <- testing_matrix_hist_on[j, 3]
+  z <- ymd(testing_matrix_hist_on[j, 4])
 
   # name eventual columns
   group_column_names <- c("value", "group")
 
   # move from raw data to group 1
-  group_1_specific <- filter(pr1_wrangled, cohort == e & site == f)
-  group_1_specific <- as.data.frame(group_1_specific[, g])
-  group_1_specific$group <- "A"
-  names(group_1_specific) <- group_column_names
+  group_1 <- filter(pr1_wrangled, cohort == w & site == x)
+  group_1 <- as.data.frame(group_1[, y])
+  group_1$group <- "A"
+  names(group_1) <- group_column_names
 
-  # move from raw data to full org for group 1
-  group_1_all <- filter(pr1_wrangled, cohort == e & site != f)
-  group_1_all <- as.data.frame(group_1_all[, g])
-  group_1_all$group <- "B"
-  names(group_1_all) <- group_column_names
+  # move from raw data to group 2
+  group_2 <- filter(pr1_wrangled, cohort == z & site == x)
+  group_2 <- as.data.frame(group_2[, y])
+  group_2$group <- "B"
+  names(group_2) <- group_column_names
 
   # union group 1 & 2 to create one data frame
-  pr1_grouped_part <- bind_rows(group_1_specific, group_1_all)
-  pr1_grouped_part <- pr1_grouped_part[c(2, 1)]
+  pr1_grouped <- bind_rows(group_1, group_2)
+  pr1_grouped <- pr1_grouped[c(2, 1)]
 
   # convert group column to a factor and value column to int
-  pr1_grouped_part$group <- as.factor(pr1_grouped_part$group)
-  pr1_grouped_part$value <- as.integer(pr1_grouped_part$value)
+  pr1_grouped$group <- as.factor(pr1_grouped$group)
+  pr1_grouped$value <- as.integer(pr1_grouped$value)
 
   # remove na values
-  pr1_grouped_part <- na.omit(pr1_grouped_part)
+  pr1_grouped <- na.omit(pr1_grouped)
 
   # declare columns for mcmc_coda function
-  names(pr1_grouped_part) <- c("X", "Y")
+  names(pr1_grouped) <- c("X", "Y")
 
-  myDataFrame_part <- as.data.frame(pr1_grouped_part)
+  myDataFrame_hist_on <- as.data.frame(pr1_grouped)
 
   yName <- "Y"
   xName <- "X"
 
   # generate MCMC chain
-  mcmc_coda_part <- genMCMC(
-    datFrm = myDataFrame_part,
+  mcmc_coda_hist_on <- genMCMC(
+    datFrm = myDataFrame_hist_on,
     yName = yName,
     xName = xName,
     numSavedSteps = 12000,
@@ -816,44 +936,46 @@ k <- 1
   )
 
   # grab all parameter names
-  parameter_names_part <- varnames(mcmc_coda_part)
+  parameter_names_hist_on <- varnames(mcmc_coda_hist_on)
 
   # get summary statistics of chain
-  summary_info_part <- smryMCMC(
-    mcmc_coda_part,
+  summary_info_hist_on <- smryMCMC(
+    mcmc_coda_hist_on,
     RopeMuDiff = c(-0.2, 0.2),
     RopeSdDiff = c(-0.2, 0.2),
     RopeEff = c(-0.1, 0.1)
   )
-  summary_info_part
+  summary_info_hist_on
 
   # save relevant summary statistics
-  temp_results_part <- summary_info_part[, c(12, 13, 14)]
-  temp_results_part <- temp_results_part[7, ]
+  temp_results_hist_on <- summary_info_hist_on[, c(12, 13, 14)]
+  temp_results_hist_on <- temp_results_hist_on[7, ]
 
-  results_part[nrow(results_part) + 1, ] <- list(ymd(e), f, g, temp_results_part[1], temp_results_part[2], temp_results_part[3])
+  results_hist_on[nrow(results_hist_on) + 1, ] <- list(ymd(a), ymd(d), b, c, temp_results_hist_on[1], temp_results_hist_on[2], temp_results_hist_on[3])
 #}
 ```
 
 Flip results into an export ready format.
 ```{r}
 # translate kpi column to kpi number
-final_results_part <- results_part
-final_results_part$kpi_columns <- as.character(final_results_part$kpi_columns)
+final_results_hist_on <- results_hist_on
+final_results_hist_on$kpi_columns <- as.character(final_results_hist_on$kpi_columns)
 
 # https://stackoverflow.com/questions/13871614/replacing-values-from-a-column-using-a-condition-in-r
-final_results_part$kpi_columns[final_results_part$kpi_columns == "6"] <- "q7_performance_job_requirements"
-final_results_part$kpi_columns[final_results_part$kpi_columns == "7"] <- "q3_professional_skills_job_requirements"
-final_results_part$kpi_columns[final_results_part$kpi_columns == "8"] <- "q6_technical_knowledge_skills_ability_job_requirements"
-final_results_part$kpi_columns[final_results_part$kpi_columns == "9"] <- "q12_manager_satisfaction_with_yu_support"
-final_results_part$kpi_columns[final_results_part$kpi_columns == "10"] <- "q13_recommended_for_hire"
+final_results_hist_on$kpi_columns[final_results_hist_on$kpi_columns == "6"] <- "q7_performance_job_requirements"
+final_results_hist_on$kpi_columns[final_results_hist_on$kpi_columns == "7"] <- "q3_professional_skills_job_requirements"
+final_results_hist_on$kpi_columns[final_results_hist_on$kpi_columns == "8"] <- "q6_technical_knowledge_skills_ability_job_requirements"
+final_results_hist_on$kpi_columns[final_results_hist_on$kpi_columns == "9"] <- "q12_manager_satisfaction_with_yu_support"
+final_results_hist_on$kpi_columns[final_results_hist_on$kpi_columns == "10"] <- "q13_recommended_for_hire"
 
 # rename columns
-colnames(final_results_part) <- c("base_cohort", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
+colnames(final_results_hist_on) <- c("base_cohort", "comparison_cohort", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
+
 
 # export to csv
-# write.csv(final_results_part, "pr1_final_results_part.csv")
+# write.csv(final_results_hist_on, "pr1_final_results_hist_on.csv")
 
 ```
+
 
 # Merge testing results for export
