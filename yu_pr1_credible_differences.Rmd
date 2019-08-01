@@ -9,6 +9,11 @@ output:
     toc_depth: 3
     toc_float: true
     theme: spacelab
+knit: (function(input_file, encoding) {
+  out_dir <- 'docs';
+  rmarkdown::render(input_file,
+ encoding=encoding,
+ output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
 ---
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -47,8 +52,6 @@ sfsql <- DBI::dbConnect(odbc::odbc(),
 ```
 
 # Overview
-
-**MERP**
 
 The code in this document uses Bayesian Parameter Estimation to identify credible differences between groups of performance review 1 survey responses. Specifically, it evaluates at the site grain whether a group of responses is credibly different from:
 
@@ -651,8 +654,8 @@ results_hist_off$grain_value <- as.character(results_hist_off$grain_value)
 Use a for loop to iterate over the relevant testing matrix. 
 ```{r echo=T, results='hide'}
 # create a two column data frame with group labels and response values for mcmc generation.
-for (i in 1:nrow(testing_matrix_hist_off)) {
-
+#for (i in 1:nrow(testing_matrix_hist_off)) {
+i <- 1
   a <- ymd(testing_matrix_hist_off[i, 2])
   b <- testing_matrix_hist_off[i, 1]
   c <- testing_matrix_hist_off[i, 3]
@@ -718,7 +721,7 @@ for (i in 1:nrow(testing_matrix_hist_off)) {
   temp_results_hist_off <- temp_results_hist_off[7, ]
 
   results_hist_off[nrow(results_hist_off) + 1, ] <- list(ymd(a), ymd(d), b, c, temp_results_hist_off[1], temp_results_hist_off[2], temp_results_hist_off[3])
-}
+#}
 ```
 
 Flip results into an export ready format.
@@ -762,8 +765,8 @@ Use a for loop to iterate over the relevant testing matrix.
 ```{r echo=T, results='hide'}
 
 # create a two column data frame with group labels and response values for mcmc generation.
-for (k in 1:nrow(testing_matrix_part)) {
-  
+#for (k in 1:nrow(testing_matrix_part)) {
+k <- 1  
   e <- ymd(testing_matrix_part[k, 1])
   f <- testing_matrix_part[k, 2]
   g <- testing_matrix_part[k, 3]
@@ -829,7 +832,7 @@ for (k in 1:nrow(testing_matrix_part)) {
   temp_results_part <- temp_results_part[7, ]
 
   results_part[nrow(results_part) + 1, ] <- list(ymd(e), f, g, temp_results_part[1], temp_results_part[2], temp_results_part[3])
-}
+#}
 ```
 
 Flip results into an export ready format.
