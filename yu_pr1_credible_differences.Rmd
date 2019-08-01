@@ -169,7 +169,7 @@ The purpose of this section is to create a data frame containing all possible co
 1. _part: Within the same cohort, one group vs all the rest.
 2. _hist_off: one group vs. its like group from the most recent cohort (eg. Jan 2020 vs. July 2019). 
 3. _hist_on: one group vs. its like group from the last like cohort (eg. Jan 2020 vs Jan 2019).
-4. _hist_avg: one group vs. its like group for the past 3 cohorts (eg. Jan 2020 vs. July 2019, Jan 2019, July 2018)
+4. _hist_l3: one group vs. its like group for the past 3 cohorts (eg. Jan 2020 vs. July 2019, Jan 2019, July 2018)
 
 For all historical comparisons, if a valid historical cohort does not exist there is no comparison to make. The data frames will be constructed such that the base cohort (A) is the earlier value and the comparison cohort (B) is the later value.
 
@@ -243,6 +243,31 @@ testing_matrix_hist_on <-
 datatable(testing_matrix_hist_on)
 ```
 
+
+### _hist_l3
+
+```{r}
+# Use comparison cohort from _hist_off
+
+colnames(comp_cohort) <- c("comparison_cohort_1", "grain_value")
+testing_matrix_hist_l3 <- merge(x = testing_matrix, y = comp_cohort, by = "grain_value")
+
+colnames(comp_cohort) <- c("comparison_cohort_2", "grain_value")
+testing_matrix_hist_l3 <- merge(x = testing_matrix_hist_l3, y = comp_cohort, by = "grain_value")
+
+colnames(comp_cohort) <- c("comparison_cohort_3", "grain_value")
+testing_matrix_hist_l3 <- merge(x = testing_matrix_hist_l3, y = comp_cohort, by = "grain_value")
+
+# spin for historical comparison
+testing_matrix_hist_l3 <- 
+  testing_matrix_hist_l3 %>%
+  filter((as_date(comparison_cohort_1) + months(6)) == as_date(base_cohort)) %>%
+  filter((as_date(comparison_cohort_2) + months(12)) == as_date(base_cohort)) %>%
+  filter((as_date(comparison_cohort_3) + months(18)) == as_date(base_cohort)) %>%
+  distinct()
+  
+datatable(testing_matrix_hist_l3)
+```
 
 # Testing prep
 
@@ -977,5 +1002,114 @@ colnames(final_results_hist_on) <- c("base_cohort", "comparison_cohort", "grain_
 
 ```
 
+# Identify credible differences using _hist_l3
+
+Generate a blank data frame with a schema to accept testing results.
+```{r}
+# generate empty data frame to accept testing results
+results_hist_l3 <- data.frame(base_cohort = ymd("1900-01-01"), comparison_cohort = ymd("1900-01-01"), grain_value = as.character("A"), kpi_columns = as.numeric(0), es_pct_less_rope = as.numeric(0), es_pct_in_rope = as.numeric(0), es_pct_greater_rope = as.numeric(0))
+
+
+results_hist_l3 <- results_hist_l3[-1, ]
+results_hist_l3$grain_value <- as.character(results_hist_l3$grain_value)
+
+```
+
+Use a for loop to iterate over the relevant testing matrix. 
+```{r echo=T, results='hide'}
+# create a two column data frame with group labels and response values for mcmc generation.
+#for (h in 1:nrow(testing_matrix_hist_l3)) {
+h <- 1
+  l <- ymd(testing_matrix_hist_l3[h, 2])
+  m <- testing_matrix_hist_l3[h, 1]
+  n <- testing_matrix_hist_l3[h, 3]
+  o <- ymd(testing_matrix_hist_l3[h, 4])
+  p <- ymd(testing_matrix_hist_l3[h, 5])
+  q <- ymd(testing_matrix_hist_l3[h, 6])
+
+  # name eventual columns
+  group_column_names <- c("value", "group")
+
+  # move from raw data to group 1
+  group_1 <- filter(pr1_wrangled, cohort == l & site == m)
+  group_1 <- as.data.frame(group_1[, n])
+  group_1$group <- "A"
+  names(group_1) <- group_column_names
+
+  # move from raw data to group 2
+  group_2 <- filter(pr1_wrangled, (cohort == o | cohort == p | cohort == q) & site == m)
+  group_2 <- as.data.frame(group_2[, n])
+  group_2$group <- "B"
+  names(group_2) <- group_column_names
+
+  # union group 1 & 2 to create one data frame
+  pr1_grouped <- bind_rows(group_1, group_2)
+  pr1_grouped <- pr1_grouped[c(2, 1)]
+
+  # convert group column to a factor and value column to int
+  pr1_grouped$group <- as.factor(pr1_grouped$group)
+  pr1_grouped$value <- as.integer(pr1_grouped$value)
+
+  # remove na values
+  pr1_grouped <- na.omit(pr1_grouped)
+
+  # declare columns for mcmc_coda function
+  names(pr1_grouped) <- c("X", "Y")
+
+  myDataFrame_hist_l3 <- as.data.frame(pr1_grouped)
+
+  yName <- "Y"
+  xName <- "X"
+
+  # generate MCMC chain
+  mcmc_coda_hist_l3 <- genMCMC(
+    datFrm = myDataFrame_hist_l3,
+    yName = yName,
+    xName = xName,
+    numSavedSteps = 12000,
+    thinSteps = 3
+  )
+
+  # grab all parameter names
+  parameter_names_hist_l3 <- varnames(mcmc_coda_hist_l3)
+
+  # get summary statistics of chain
+  summary_info_hist_l3 <- smryMCMC(
+    mcmc_coda_hist_l3,
+    RopeMuDiff = c(-0.2, 0.2),
+    RopeSdDiff = c(-0.2, 0.2),
+    RopeEff = c(-0.1, 0.1)
+  )
+  summary_info_hist_l3
+
+  # save relevant summary statistics
+  temp_results_hist_l3 <- summary_info_hist_l3[, c(12, 13, 14)]
+  temp_results_hist_l3 <- temp_results_hist_l3[7, ]
+
+  results_hist_l3[nrow(results_hist_l3) + 1, ] <- list(ymd(a), ymd(d), b, c, temp_results_hist_l3[1], temp_results_hist_l3[2], temp_results_hist_l3[3])
+#}
+```
+
+Flip results into an export ready format.
+```{r}
+# translate kpi column to kpi number
+final_results_hist_l3 <- results_hist_l3
+final_results_hist_l3$kpi_columns <- as.character(final_results_hist_l3$kpi_columns)
+
+# https://stackoverflow.com/questions/13871614/replacing-values-from-a-column-using-a-condition-in-r
+final_results_hist_l3$kpi_columns[final_results_hist_l3$kpi_columns == "6"] <- "q7_performance_job_requirements"
+final_results_hist_l3$kpi_columns[final_results_hist_l3$kpi_columns == "7"] <- "q3_professional_skills_job_requirements"
+final_results_hist_l3$kpi_columns[final_results_hist_l3$kpi_columns == "8"] <- "q6_technical_knowledge_skills_ability_job_requirements"
+final_results_hist_l3$kpi_columns[final_results_hist_l3$kpi_columns == "9"] <- "q12_manager_satisfaction_with_yu_support"
+final_results_hist_l3$kpi_columns[final_results_hist_l3$kpi_columns == "10"] <- "q13_recommended_for_hire"
+
+# rename columns
+colnames(final_results_hist_l3) <- c("base_cohort", "comparison_cohort", "grain_value", "kpi_question", "es_pct_less_rope", "es_pct_in_rope", "es_pct_greater_rope")
+
+
+# export to csv
+# write.csv(final_results_hist_l3, "pr1_final_results_hist_l3.csv")
+
+```
 
 # Merge testing results for export
