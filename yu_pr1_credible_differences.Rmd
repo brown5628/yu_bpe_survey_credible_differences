@@ -1134,7 +1134,8 @@ Then write to SQL server.
 # dbWriteTable(
 #  conn = sfsql,
 #  name = "pr1_credible_differences",
-#  value = all_results_export
+#  value = all_results_export,
+#  overwrite = TRUE #True will overwrite the existing table
 #)
 
 ```
