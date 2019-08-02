@@ -1123,5 +1123,19 @@ Want all testing results merged into 1 data frame.
 ```{r}
 all_results_export <- rbind(final_results_part,final_results_hist_off,final_results_hist_on,final_results_hist_l3)
 
+# export to csv
+# write.csv(all_results_export, "pr1_all_results.csv")
+```
+
+Then write to SQL server.
+
+```{r}
+
+# dbWriteTable(
+#  conn = sfsql,
+#  name = "pr1_credible_differences",
+#  value = all_results_export
+#)
+
 ```
 
