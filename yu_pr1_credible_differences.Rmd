@@ -21,33 +21,31 @@ library(knitr)
 library(DBI)
 library(odbc)
 library(tidyverse)
+library(lubridate)
 library(ggplot2)
 library(DT)
 library(viridis)
-library(htmlwidgets)
-library(skimr)
-library(visdat)
-library(DataExplorer)
-library(formattable)
 library(zoo)
-library(tint)
-library(arsenal)
-library(lubridate)
 library(rjags)
 library(readxl)
 library(BEST)
 
-sfsql <- NULL 
+snow <- NULL 
 ```
 ```{r, include=FALSE}
-# UID and PWD appear to need to be manually set to function. Saved version strips these. 
+# On new setup needs Snowflake ODBC driver installed.
+# Credentials stored in OS credential storage per https://db.rstudio.com/best-practices/managing-credentials/
 
-sfsql <- DBI::dbConnect(odbc::odbc(), 
-                      Driver = "SQL Server", 
-                      Server = "sfsql", 
-                      Database = "Test", 
-                      Port     = 1433,
-                      Trusted_Connection = "True")
+snow <- DBI::dbConnect(
+  drv = odbc::odbc(), 
+  UID = keyring::key_list("snowflake")[1,2],
+  PWD = keyring::key_get("snowflake", (keyring::key_list("snowflake")[1,2])),
+  Server = 'yearup.us-east-1.snowflakecomputing.com',
+  Warehouse = "QUERY",
+  Role = 'SYSADMIN',
+  Database = 'TEST_DB',
+  Driver = "SnowflakeDSIIDriver",
+  Port = 443)
 
 ```
 
@@ -67,7 +65,7 @@ The product of the code is a single table that returns the summary statisics nec
 
 ## Load responses from sql server
 
-```{sql, connection=sfsql, output.var="pr1_raw"}
+```{sql, connection=snow, output.var="pr1_raw"}
 
 select 
 	pr1.Engagement_ID as engagement_id,
@@ -77,53 +75,53 @@ select
 	pr1.Program_Manager as program_manager,
 
 	case 
-		when pr1.[7_performance_meets_requirements] = 'Always' then 5
-		when pr1.[7_performance_meets_requirements] = 'Often' then 4
-		when pr1.[7_performance_meets_requirements] = 'Sometimes' then 3
-		when pr1.[7_performance_meets_requirements] = 'Rarely' then 2
-		when pr1.[7_performance_meets_requirements] = 'Never' then 1
+		when pr1."[7_performance_meets_requirements]" = 'Always' then 5
+		when pr1."[7_performance_meets_requirements]" = 'Often' then 4
+		when pr1."[7_performance_meets_requirements]" = 'Sometimes' then 3
+		when pr1."[7_performance_meets_requirements]" = 'Rarely' then 2
+		when pr1."[7_performance_meets_requirements]" = 'Never' then 1
 		else 9999999999
 	end as q7_performance_job_requirements,
 
 	case 
-		when pr1.[3_professional_business_communication_skills] = 'Always' then 5
-		when pr1.[3_professional_business_communication_skills] = 'Often' then 4
-		when pr1.[3_professional_business_communication_skills] = 'Sometimes' then 3
-		when pr1.[3_professional_business_communication_skills] = 'Rarely' then 2
-		when pr1.[3_professional_business_communication_skills] = 'Never' then 1
+		when pr1."[3_professional_business_communication_skills]" = 'Always' then 5
+		when pr1."[3_professional_business_communication_skills]" = 'Often' then 4
+		when pr1."[3_professional_business_communication_skills]" = 'Sometimes' then 3
+		when pr1."[3_professional_business_communication_skills]" = 'Rarely' then 2
+		when pr1."[3_professional_business_communication_skills]" = 'Never' then 1
 		else 9999999999
 	end as q3_professional_skills_job_requirements,
 
 	case 
-		when pr1.[6_knowledge_skills_ability] = 'Always' then 5
-		when pr1.[6_knowledge_skills_ability] = 'Often' then 4
-		when pr1.[6_knowledge_skills_ability] = 'Sometimes' then 3
-		when pr1.[6_knowledge_skills_ability] = 'Rarely' then 2
-		when pr1.[6_knowledge_skills_ability] = 'Never' then 1
+		when pr1."[6_knowledge_skills_ability]" = 'Always' then 5
+		when pr1."[6_knowledge_skills_ability]" = 'Often' then 4
+		when pr1."[6_knowledge_skills_ability]" = 'Sometimes' then 3
+		when pr1."[6_knowledge_skills_ability]" = 'Rarely' then 2
+		when pr1."[6_knowledge_skills_ability]" = 'Never' then 1
 		else 9999999999
 	end as q6_technical_knowledge_skills_ability_job_requirements,
 
 	case 
-		when pr1.[12_satisfied_year_up_quality_service_support] = 'Completely satisfied' then 5
-		when pr1.[12_satisfied_year_up_quality_service_support] = 'Very satisfied' then 4
-		when pr1.[12_satisfied_year_up_quality_service_support] = 'Moderately satisfied' then 3
-		when pr1.[12_satisfied_year_up_quality_service_support] = 'Slightly satisfied' then 2
-		when pr1.[12_satisfied_year_up_quality_service_support] = 'Not at all satisfied' then 1
+		when pr1."[12_satisfied_year_up_quality_service_support]" = 'Completely satisfied' then 5
+		when pr1."[12_satisfied_year_up_quality_service_support]" = 'Very satisfied' then 4
+		when pr1."[12_satisfied_year_up_quality_service_support]" = 'Moderately satisfied' then 3
+		when pr1."[12_satisfied_year_up_quality_service_support]" = 'Slightly satisfied' then 2
+		when pr1."[12_satisfied_year_up_quality_service_support]" = 'Not at all satisfied' then 1
 		else 9999999999
 	end as q12_manager_satisfaction_with_yu_support,	
 
 	case
-		when pr1.[13_recommend_for_hire] = 'Completely likely' then 5
-		when pr1.[13_recommend_for_hire] = 'Very likely' then 4
-		when pr1.[13_recommend_for_hire] = 'Moderately likely' then 3
-		when pr1.[13_recommend_for_hire] = 'Slightly likely' then 2
-		when pr1.[13_recommend_for_hire] = 'Not at all likely' then 1
-		when pr1.[13_recommend_for_hire] = 'I do not know at this time.' then NULL
+		when pr1."[13_recommend_for_hire]" = 'Completely likely' then 5
+		when pr1."[13_recommend_for_hire]" = 'Very likely' then 4
+		when pr1."[13_recommend_for_hire]" = 'Moderately likely' then 3
+		when pr1."[13_recommend_for_hire]" = 'Slightly likely' then 2
+		when pr1."[13_recommend_for_hire]" = 'Not at all likely' then 1
+		when pr1."[13_recommend_for_hire]" = 'I do not know at this time.' then NULL
 		else 9999999999
 	end as q13_recommended_for_hire
 
 
-from performance_review_1_results_materialized as pr1
+from analytics.program.performance_review_1_results_materialized as pr1
 
 where kpi_completion = 'Yes'
 
@@ -131,6 +129,10 @@ where kpi_completion = 'Yes'
 
 
 ```{r}
+# make snowfalke stop yelling
+
+colnames(pr1_raw) <- tolower(colnames(pr1_raw))
+
 str(pr1_raw)
 ```
 
@@ -1090,7 +1092,7 @@ for (h in 1:nrow(testing_matrix_hist_l3)) {
   temp_results_hist_l3 <- summary_info_hist_l3[, c(12, 13, 14)]
   temp_results_hist_l3 <- temp_results_hist_l3[7, ]
 
-  results_hist_l3[nrow(results_hist_l3) + 1, ] <- list(ymd(a), '_hist_l3', b, c, temp_results_hist_l3[1], temp_results_hist_l3[2], temp_results_hist_l3[3])
+  results_hist_l3[nrow(results_hist_l3) + 1, ] <- list(ymd(l), '_hist_l3', m, n, temp_results_hist_l3[1], temp_results_hist_l3[2], temp_results_hist_l3[3])
 }
 ```
 
@@ -1132,7 +1134,7 @@ Then write to SQL server.
 ```{r}
 
 # dbWriteTable(
-#  conn = sfsql,
+#  conn = snow,
 #  name = "pr1_credible_differences",
 #  value = all_results_export,
 #  overwrite = TRUE #True will overwrite the existing table
